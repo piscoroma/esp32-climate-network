@@ -1,0 +1,15 @@
+{
+  "folders": [
+    {
+      "name": "sensor-node",
+      "path": "firmware/sensor-node"
+    },
+    {
+      "name": "shared",
+      "path": "shared"
+    }
+  ],
+  "settings": {
+    "C_Cpp.default.intelliSenseMode": "linux-gcc-x86"
+  }
+}
