@@ -76,12 +76,23 @@ void setup() {
 }
 
 void loop() {
-  SensorData data;
+  // Serve HTTP first: it must not wait for the ingestion POSTs.
+  wol.handleClient();
 
-  if (receiver.getLatestData(data)) {
-    ingestion.send(data);
+  // One reading per iteration, so a backlog cannot starve the web server.
+  ReceivedPacket packet;
+  if (receiver.dequeue(packet)) {
+    receiver.logPacket(packet);
+    ingestion.send(packet);
+  }
+
+  const uint32_t dropped = receiver.takeDroppedPackets();
+  if (dropped > 0) {
+    Serial.printf(
+        "WARNING: %lu packet(s) discarded, receive queue full\n",
+        static_cast<unsigned long>(dropped));
   }
 
   keepWifiAlive();
-  delay(50);
+  delay(2);
 }

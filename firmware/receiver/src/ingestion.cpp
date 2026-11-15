@@ -7,7 +7,7 @@
 #include "config.h"
 #include "espnow_receiver.h"
 
-bool IngestionClient::send(const SensorData& data)
+bool IngestionClient::send(const ReceivedPacket& packet)
 {
    if (WiFi.status() != WL_CONNECTED) {
       Serial.println("ERROR: ingestion skipped, Wi-Fi not connected");

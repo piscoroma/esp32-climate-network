@@ -2,14 +2,33 @@
 
 #include <Arduino.h>
 #include <esp_now.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+
+#include <atomic>
 
 #include <sensor_data.h>
+
+struct ReceivedPacket {
+   SensorData data;
+   uint8_t sourceMac[6];
+   int8_t rssi;
+   bool rssiValid;
+};
 
 class EspNowReceiver {
 
    public:
       bool begin();
-      bool getLatestData(SensorData& data);
+
+      // Pops the oldest queued packet. Returns false when the queue is empty.
+      bool dequeue(ReceivedPacket& packet);
+
+      // Prints one packet to the serial console.
+      void logPacket(const ReceivedPacket& packet);
+
+      // Packets discarded because the queue was full, reset to zero on read.
+      uint32_t takeDroppedPackets();
 
       // Room name of a device, used in the serial log and in the ingestion
       // payload.

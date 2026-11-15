@@ -1,12 +1,13 @@
 #include "espnow_receiver.h"
 
 #include <WiFi.h>
-#include <esp_now.h>
+
+#include "config.h"
 
 namespace {
 
-SensorData latestData{};
-volatile bool dataAvailable = false;
+QueueHandle_t packetQueue = nullptr;
+std::atomic<uint32_t> droppedPackets{0};
 
 void printMacAddress(const uint8_t* mac)
 {
@@ -60,6 +61,12 @@ bool EspNowReceiver::begin()
 
    Serial.printf("Channel: %u\n", WiFi.channel());
 
+   packetQueue = xQueueCreate(DATA_QUEUE_DEPTH, sizeof(ReceivedPacket));
+   if (packetQueue == nullptr) {
+      Serial.println("ERROR: Failed to create the receive queue");
+      return false;
+   }
+
    if (esp_now_init() != ESP_OK) {
       Serial.println("ERROR: ESP-NOW initialization failed");
       return false;
@@ -73,6 +80,9 @@ bool EspNowReceiver::begin()
    return true;
 }
 
+// Runs in the Wi-Fi task: no serial output and no network calls here, only a
+// copy into the queue. With a single slot any packet arriving while the loop is
+// busy with a POST would be overwritten and lost.
 void EspNowReceiver::onDataReceived(
    const esp_now_recv_info_t* info,
    const uint8_t* data,
@@ -87,31 +97,46 @@ void EspNowReceiver::onDataReceived(
       return;
    }
 
-   SensorData sensorData{};
-   memcpy(&sensorData, data, sizeof(sensorData));
+   ReceivedPacket packet{};
+   memcpy(&packet.data, data, sizeof(packet.data));
+   memcpy(packet.sourceMac, info->src_addr, sizeof(packet.sourceMac));
 
-   latestData = sensorData;
-   dataAvailable = true;
+   packet.rssiValid = info->rx_ctrl != nullptr;
+   packet.rssi = packet.rssiValid ? info->rx_ctrl->rssi : 0;
 
-   const int rssi = info->rx_ctrl ? info->rx_ctrl->rssi : 0;
-
-   Serial.print("Packet received from ");
-   printMacAddress(info->src_addr);
-   Serial.printf(" | rssi=%d dBm | channel=%u\n", rssi, WiFi.channel());
-
-   printSensorData(sensorData);
+   if (xQueueSend(packetQueue, &packet, 0) != pdTRUE) {
+      droppedPackets.fetch_add(1, std::memory_order_relaxed);
+   }
 }
 
-bool EspNowReceiver::getLatestData(SensorData& data)
+bool EspNowReceiver::dequeue(ReceivedPacket& packet)
 {
-   if (!dataAvailable) {
+   if (packetQueue == nullptr) {
       return false;
    }
 
-   data = latestData;
-   dataAvailable = false;
+   return xQueueReceive(packetQueue, &packet, 0) == pdTRUE;
+}
 
-   return true;
+uint32_t EspNowReceiver::takeDroppedPackets()
+{
+   return droppedPackets.exchange(0, std::memory_order_relaxed);
+}
+
+void EspNowReceiver::logPacket(const ReceivedPacket& packet)
+{
+   Serial.print("Packet received from ");
+   printMacAddress(packet.sourceMac);
+
+   if (packet.rssiValid) {
+      Serial.printf(" | rssi=%d dBm", packet.rssi);
+   } else {
+      Serial.print(" | rssi=n/a");
+   }
+
+   Serial.printf(" | channel=%u\n", WiFi.channel());
+
+   printSensorData(packet.data);
 }
 
 void EspNowReceiver::printSensorData(const SensorData& data)
