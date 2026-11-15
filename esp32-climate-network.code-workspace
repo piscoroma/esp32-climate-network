@@ -5,6 +5,10 @@
       "path": "firmware/sensor-node"
     },
     {
+      "name": "receiver",
+      "path": "firmware/receiver"
+    },
+    {
       "name": "shared",
       "path": "shared"
     }

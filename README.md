@@ -15,7 +15,7 @@ nodes practical.
 | Component | Path | State |
 |---|---|---|
 | Sensor node | `firmware/sensor-node/` | Working — 3 boards, 6 build environments |
-| Receiver / gateway | `firmware/receiver/` | Not started |
+| Receiver / gateway | `firmware/receiver/` | Phase 2 — receives over ESP-NOW, POSTs each reading |
 | Wire format | `shared/sensor_data.h` | Stable, pinned by `static_assert` |
 
 ## Architecture
@@ -63,17 +63,26 @@ Power characteristics worth knowing per board:
 ```
 .
 ├── firmware/
-│   └── sensor-node/          ESP32-C3 node firmware (PlatformIO)
+│   ├── sensor-node/          ESP32-C3 node firmware (PlatformIO)
+│   │   ├── src/
+│   │   │   ├── main.cpp          boot sequence, measurement, channel recovery
+│   │   │   ├── config.h          sleep interval, receiver MAC, DEVICE_ID
+│   │   │   ├── board_config.h    per-board pins and HAS_DISPLAY
+│   │   │   ├── sht31_sensor.*    SHT31 wrapper
+│   │   │   ├── espnow_sender.*   ESP-NOW init, peer, blocking send
+│   │   │   └── display.*         SSD1306 72x40 wrapper over U8g2
+│   │   └── platformio.ini
+│   └── receiver/             ESP32-C3 gateway firmware (PlatformIO)
 │       ├── src/
-│       │   ├── main.cpp          boot sequence, measurement, channel recovery
-│       │   ├── config.h          sleep interval, receiver MAC, DEVICE_ID
-│       │   ├── board_config.h    per-board pins and HAS_DISPLAY
-│       │   ├── sht31_sensor.*    SHT31 wrapper
-│       │   ├── espnow_sender.*   ESP-NOW init, peer, blocking send
-│       │   └── display.*         SSD1306 72x40 wrapper over U8g2
+│       │   ├── main.cpp          Wi-Fi association, ingestion loop
+│       │   ├── config.h          ingestion URL and timeouts
+│       │   ├── secrets.example.h template for secrets.h (not committed)
+│       │   ├── espnow_receiver.* ESP-NOW receive, validation, serial log
+│       │   └── ingestion.*       JSON payload and HTTP POST
 │       └── platformio.ini
 ├── shared/
 │   └── sensor_data.h         ESP-NOW wire format, included by both projects
+├── esp32-climate-network.code-workspace
 └── AGENTS.md                 Engineering notes and non-obvious constraints
 ```
 
@@ -87,14 +96,17 @@ at `~/.platformio/penv/bin/pio`.
 Builds are run from the repository root; `default_envs = oled042`, so a bare
 `pio run` builds only the OLED target.
 
-In VSCode, open `firmware/sensor-node` directly, or the
-`esp32-climate-network.code-workspace` file from the repository root to get the
-node project and `shared/` in a single window. PlatformIO IDE needs the folder
-that contains `platformio.ini` to be part of the workspace: if you open only the
-repository root, the extension has to be pointed at the nested project and the
-C/C++ extension will not find the generated
-`firmware/sensor-node/.vscode/c_cpp_properties.json`, so IntelliSense shows
-missing includes.
+In VSCode, open `esp32-climate-network.code-workspace` from the repository root
+to get both firmware projects and `shared/` in a single window, or open
+`firmware/sensor-node` directly. PlatformIO IDE needs the folder that contains
+`platformio.ini` to be part of the workspace: if you open only the repository
+root, the extension has to be pointed at the nested project and the C/C++
+extension will not find the generated `.vscode/c_cpp_properties.json`, so
+IntelliSense shows missing includes.
+
+The receiver does not build on a fresh clone until its Wi-Fi credentials exist:
+copy `firmware/receiver/src/secrets.example.h` to `secrets.h` first (see
+[Ingestion](#ingestion)).
 
 ```bash
 # Build one environment
@@ -105,9 +117,15 @@ pio run -d firmware/sensor-node -e c3-zero        # Waveshare ESP32-C3-Zero
 # Keep the board awake and the USB port available (serial debugging)
 pio run -d firmware/sensor-node -e oled042-debug
 
+# Receiver / gateway
+pio run -d firmware/receiver -e c3                 # ESP32-C3 gateway
+
 # Flash and watch the logs
 pio run -d firmware/sensor-node -e oled042 -t upload --upload-port /dev/ttyACM0
 pio device monitor -d firmware/sensor-node -e oled042 -b 115200
+
+pio run -d firmware/receiver -e c3 -t upload --upload-port /dev/ttyACM0
+pio device monitor -d firmware/receiver -e c3 -b 115200
 ```
 
 | Environment | Board | Deep sleep |
@@ -116,6 +134,7 @@ pio device monitor -d firmware/sensor-node -e oled042 -b 115200
 | `xiao-c3` | XIAO ESP32C3 | yes |
 | `c3-zero` | C3-Zero | yes |
 | `*-debug` | same boards | no, stays awake |
+| `c3` (receiver) | ESP32-C3 devkit | never sleeps |
 
 Flash usage is ~77 % of the 1.31 MB application partition on the OLED build —
 check the size report before adding large libraries.
@@ -149,7 +168,8 @@ a matching `[env:*]` section in `platformio.ini`.
 6. If no ACK, probe the other channels; a success caches the new channel, a full
    failure sets a backoff so the next wakes skip the scan.
 7. Draw the reading on the OLED.
-8. Record the elapsed time and start the timer wake-up.
+8. Add the awake time plus the programmed sleep interval to the uptime offset,
+   then start the timer wake-up.
 
 The channel scan exists because ESP-NOW uses the current Wi-Fi channel: when the
 gateway is an access-point client it may follow the router to another channel,
@@ -176,11 +196,47 @@ in the same commit.
 `DeviceId` currently defines: `UFFICIO`, `CAMERA_DA_LETTO`, `SALOTTO`,
 `CUCINA`, `BAGNO`.
 
+## Ingestion
+
+The gateway joins the local Wi-Fi network and POSTs every received reading:
+
+```
+POST http://192.168.1.175:9106/ingestion
+Content-Type: application/json
+
+{"device_id":"CAMERA DA LETTO","sequence":42,"uptime":2520,"temperature":21.34,"humidity":45.67}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `device_id` | string | room name derived from `DeviceId` |
+| `sequence` | number | node sequence counter, incremented every wake |
+| `uptime` | number | node cumulative seconds since first boot |
+| `temperature` | number | °C |
+| `humidity` | number | %RH |
+
+Wi-Fi credentials are not in the repository. Copy the template and fill it in
+before flashing:
+
+```bash
+cp firmware/receiver/src/secrets.example.h firmware/receiver/src/secrets.h
+$EDITOR firmware/receiver/src/secrets.h
+```
+
+`secrets.h` is listed in `.gitignore`. The endpoint and the timeouts live in
+`firmware/receiver/src/config.h`.
+
+Two consequences worth knowing: associating the gateway to an access point moves
+the ESP-NOW channel to the router's one, so the nodes may have to rescan before
+they are heard again; and a failed POST is only logged — each reading is sent
+once, there is no retry queue yet.
+
 ## Roadmap
 
-- [ ] `firmware/receiver/` — ESP32-C3 gateway: ESP-NOW receive, room summary on
-      the display, `WiFi.setSleep(false)` so frames are not dropped, channel log
-- [ ] Persistence / web service exposing the room history
+- [x] `firmware/receiver/` — ESP-NOW receive, packet validation and serial log
+- [x] HTTP ingestion — one JSON POST per received reading
+- [ ] Room-summary display on the gateway
+- [ ] Retry queue for failed ingestion (a failed POST currently drops the reading)
 - [ ] Real I2C pin pair for the Waveshare C3-Zero
 - [ ] Documented power measurements per board (display on/off, sleep interval)
 

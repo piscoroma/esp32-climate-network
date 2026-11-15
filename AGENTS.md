@@ -3,13 +3,14 @@
 ESP32-C3 Arduino firmware (PlatformIO): reads an SHT31 over I2C, sends one
 `SensorData` packet over ESP-NOW to a hardcoded receiver MAC, shows the reading
 on the 0.42" OLED when the board has one, then deep-sleeps (currently 60 s).
-The receiver (`firmware/receiver`, next step) is the ESP32-C3 gateway with the
-room-summary display.
+The receiver (`firmware/receiver`) is the ESP32-C3 gateway. It receives
+`SensorData` packets, logs them to serial and POSTs each reading to the
+ingestion endpoint; the room-summary display comes next.
 
 ## Repository layout
 
 - `firmware/sensor-node/` — ESP32-C3 sensor nodes (this document's project).
-- `firmware/receiver/` — ESP32-C3 receiver/gateway (to be added).
+- `firmware/receiver/` — ESP32-C3 receiver/gateway.
 - `shared/sensor_data.h` — single source of truth for the ESP-NOW wire format;
   both projects include it via `-I../../shared`.
 
@@ -20,7 +21,8 @@ Unless a path starts with `firmware/` or `shared/`, it is relative to
 
 `pio` is not on `PATH` in this environment; use the PlatformIO venv binary.
 `default_envs = oled042`, so a bare `pio run` only builds that env; select the
-others with `-e`. Run from the repository root with `-d firmware/sensor-node`.
+others with `-e`. Run from the repository root with `-d firmware/sensor-node`
+(or `-d firmware/receiver`).
 
 ```bash
 ~/.platformio/penv/bin/pio run -d firmware/sensor-node -e oled042  # OLED board
@@ -31,6 +33,7 @@ others with `-e`. Run from the repository root with `-d firmware/sensor-node`.
     --upload-port /dev/ttyACM0
 ~/.platformio/penv/bin/pio device monitor -d firmware/sensor-node -e oled042 \
     -b 115200  # auto-reconnect
+~/.platformio/penv/bin/pio run -d firmware/receiver -e c3  # ESP32-C3 gateway
 ```
 
 There is no test suite: `test/` contains only the stock PlatformIO README.
@@ -141,8 +144,12 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
   `loop()` to repeat `measureAndSend()`. Don't move production periodic logic
   into `loop()`.
 - Deep sleep wipes RAM: persist state with `RTC_DATA_ATTR` (`sequence` and
-  `uptimeOffsetMs`; the latter makes `SensorData.uptime` cumulative **seconds**
-  instead of `millis()` since wake). Serial must be re-initialized every wake
+  `uptimeOffsetMs`). `uptimeOffsetMs` makes `SensorData.uptime` cumulative
+  **seconds** instead of `millis()` since wake, and it must add
+  `SLEEP_INTERVAL_US / 1000` at every sleep: `millis()` only measures the awake
+  part of the cycle. The sleep timer runs off the internal RC oscillator, so the
+  value drifts by a few percent over days — treat it as a monotonic counter, not
+  as a clock. Serial must be re-initialized every wake
   (the existing `delay(500)` covers USB-CDC enumeration).
 - A failed SHT31 read is retried once after 100 ms. ESP-NOW sends are retried
   `SEND_ATTEMPTS` times on the cached channel, then `sendWithChannelRecovery()`
@@ -152,7 +159,20 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
 - ESP-NOW uses the current WiFi channel. A receiver associated to the router
   follows the router's channel, so sensors recover by probing. The receiver must
   call `WiFi.setSleep(false)` (or it can miss ESP-NOW frames) and should log
-  `WiFi.channel()` after connecting.
+  `WiFi.channel()`. The gateway associates at boot (it needs the network for
+  ingestion), so `DEFAULT_CHANNEL = 1` on the nodes only matches straight away
+  when the AP is on channel 1 — otherwise the first few cycles can be lost while
+  the nodes scan.
+- The receiver's Wi-Fi credentials live in `firmware/receiver/src/secrets.h`,
+  which is gitignored; `secrets.example.h` is the committed template. A fresh
+  clone does not build until the file is copied to `secrets.h`.
+- Ingestion POSTs run from `loop()`, never from the ESP-NOW receive callback:
+  the callback runs in the Wi-Fi task and a blocking `HTTPClient` request there
+  would stall the stack and drop frames. The callback only validates, copies the
+  packet and sets a flag.
+- `HTTPClient::setTimeout()` takes a `uint16_t` (65 s max) and the endpoint is
+  plain HTTP, no TLS. A non-2xx answer or a transport error is logged and the
+  reading is dropped: there is no retry queue yet.
 - Early `return`s in `setup()` on init failure leave the board awake forever
   draining the battery; error paths that should retry later must still call
   `sleepForNextMeasurement()`.
@@ -182,6 +202,12 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
 - `firmware/sensor-node/src/display.*` — generic SSD1306 72x40 wrapper over U8g2
   (SW I2C on GPIO5/6)
 - `shared/sensor_data.h` — shared wire format
-- `firmware/receiver/` — ESP32-C3 receiver/gateway (to be added)
+- `firmware/receiver/src/main.cpp` — Wi-Fi association, ingestion loop
+- `firmware/receiver/src/config.h` — ingestion URL and timeouts
+- `firmware/receiver/src/espnow_receiver.*` — ESP-NOW receive callback, packet
+  validation, `getLatestData()` for the future display
+- `firmware/receiver/src/ingestion.*` — JSON payload and HTTP POST
+- `firmware/receiver/src/secrets.example.h` — template; `secrets.h` is local and
+  gitignored
 - `firmware/sensor-node/.pio/`, `.vscode/c_cpp_properties.json`,
   `compile_commands.json` are generated artifacts; never hand-edit them.
