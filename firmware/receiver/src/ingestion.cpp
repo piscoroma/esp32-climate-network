@@ -15,18 +15,26 @@ bool IngestionClient::send(const SensorData& data)
    }
 
    // {"device_id":"UFFICIO","sequence":42,"uptime":2520,
-   //  "temperature":21.34,"humidity":45.67}
-   char payload[160];
+   //  "temperature":21.34,"humidity":45.67,"rssi":-63}
+   char rssi[8];
+   if (packet.rssiValid) {
+      snprintf(rssi, sizeof(rssi), "%d", packet.rssi);
+   } else {
+      snprintf(rssi, sizeof(rssi), "null");
+   }
+
+   char payload[192];
    const int length = snprintf(
       payload,
       sizeof(payload),
       "{\"device_id\":\"%s\",\"sequence\":%lu,\"uptime\":%lu,"
-      "\"temperature\":%.2f,\"humidity\":%.2f}",
-      EspNowReceiver::deviceName(data.deviceId),
-      static_cast<unsigned long>(data.sequence),
-      static_cast<unsigned long>(data.uptime),
-      data.temperature,
-      data.humidity
+      "\"temperature\":%.2f,\"humidity\":%.2f,\"rssi\":%s}",
+      EspNowReceiver::deviceName(packet.data.deviceId),
+      static_cast<unsigned long>(packet.data.sequence),
+      static_cast<unsigned long>(packet.data.uptime),
+      packet.data.temperature,
+      packet.data.humidity,
+      rssi
    );
 
    if (length <= 0 || length >= static_cast<int>(sizeof(payload))) {
