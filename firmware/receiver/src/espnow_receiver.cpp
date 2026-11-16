@@ -2,12 +2,57 @@
 
 #include <WiFi.h>
 
+#include <cstring>
+
 #include "config.h"
 
 namespace {
 
 QueueHandle_t packetQueue = nullptr;
 std::atomic<uint32_t> droppedPackets{0};
+std::atomic<uint32_t> duplicatePackets{0};
+
+// Last packet accepted from each sender. A retried send (lost ACK, channel
+// probe) delivers the same 20 bytes again; comparing the whole struct also
+// survives a node power cycle, which does not reset `sequence` but does restart
+// `uptime` from zero.
+struct SenderState {
+   uint8_t mac[6];
+   SensorData last;
+   bool valid;
+};
+
+constexpr uint8_t MAX_TRACKED_SENDERS = 8;
+SenderState senders[MAX_TRACKED_SENDERS]{};
+
+bool isDuplicate(const ReceivedPacket& packet)
+{
+   for (SenderState& state : senders) {
+      if (!state.valid ||
+          memcmp(state.mac, packet.sourceMac, sizeof(state.mac)) != 0) {
+         continue;
+      }
+
+      if (memcmp(&state.last, &packet.data, sizeof(SensorData)) == 0) {
+         return true;
+      }
+
+      state.last = packet.data;
+      return false;
+   }
+
+   for (SenderState& state : senders) {
+      if (!state.valid) {
+         memcpy(state.mac, packet.sourceMac, sizeof(state.mac));
+         state.last = packet.data;
+         state.valid = true;
+         return false;
+      }
+   }
+
+   // Table full: accept the packet without tracking it.
+   return false;
+}
 
 void printMacAddress(const uint8_t* mac)
 {
@@ -104,6 +149,11 @@ void EspNowReceiver::onDataReceived(
    packet.rssiValid = info->rx_ctrl != nullptr;
    packet.rssi = packet.rssiValid ? info->rx_ctrl->rssi : 0;
 
+   if (isDuplicate(packet)) {
+      duplicatePackets.fetch_add(1, std::memory_order_relaxed);
+      return;
+   }
+
    if (xQueueSend(packetQueue, &packet, 0) != pdTRUE) {
       droppedPackets.fetch_add(1, std::memory_order_relaxed);
    }
@@ -121,6 +171,11 @@ bool EspNowReceiver::dequeue(ReceivedPacket& packet)
 uint32_t EspNowReceiver::takeDroppedPackets()
 {
    return droppedPackets.exchange(0, std::memory_order_relaxed);
+}
+
+uint32_t EspNowReceiver::takeDuplicatePackets()
+{
+   return duplicatePackets.exchange(0, std::memory_order_relaxed);
 }
 
 void EspNowReceiver::logPacket(const ReceivedPacket& packet)

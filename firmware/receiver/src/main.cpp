@@ -103,6 +103,13 @@ void loop() {
         static_cast<unsigned long>(dropped));
   }
 
+  const uint32_t duplicates = receiver.takeDuplicatePackets();
+  if (duplicates > 0) {
+    Serial.printf(
+        "WARNING: %lu duplicate packet(s) discarded\n",
+        static_cast<unsigned long>(duplicates));
+  }
+
   keepWifiAlive();
   delay(2);
 }

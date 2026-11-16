@@ -30,6 +30,9 @@ class EspNowReceiver {
       // Packets discarded because the queue was full, reset to zero on read.
       uint32_t takeDroppedPackets();
 
+      // Exact duplicates already queued once, reset to zero on read.
+      uint32_t takeDuplicatePackets();
+
       // Room name of a device, used in the serial log and in the ingestion
       // payload.
       static const char* deviceName(DeviceId deviceId);
