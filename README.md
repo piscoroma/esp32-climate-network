@@ -171,7 +171,7 @@ a matching `[env:*]` section in `platformio.ini`.
 5. Send the packet on the cached channel up to `SEND_ATTEMPTS` times.
 6. If no ACK, probe the other channels; a success caches the new channel, a full
    failure sets a backoff so the next wakes skip the scan.
-7. Blink the status LED when the packet was acknowledged.
+7. Blink the status LED when the packet was acknowledged (`BLINK_ON_SEND`).
 8. Draw the reading on the OLED.
 9. Add the awake time plus the programmed sleep interval to the uptime offset,
    then start the timer wake-up.

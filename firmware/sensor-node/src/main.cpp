@@ -130,7 +130,9 @@ bool measureAndSend()
         data.humidity
     );
 
-    statusLed.blinkSent();
+    if (BLINK_ON_SEND) {
+      statusLed.blinkSent();
+    }
   } else {
     Serial.println("ERROR: ESP-NOW transmission failed");
   }

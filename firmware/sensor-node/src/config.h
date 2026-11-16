@@ -36,5 +36,8 @@ constexpr uint8_t CHANNEL_SCAN[] = {
 constexpr uint8_t DISPLAY_CONTRAST_PERCENT = 1;
 constexpr bool KEEP_DISPLAY_ON_DURING_SLEEP = true;
 
+// Blink the status LED once when the reading was acknowledged.
+constexpr bool BLINK_ON_SEND = false;
+
 // Change this when flashing a node for a different room.
 constexpr DeviceId DEVICE_ID = DeviceId::UFFICIO;

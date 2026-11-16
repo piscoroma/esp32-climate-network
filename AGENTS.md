@@ -101,9 +101,10 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
 
 - `src/config.h` — application parameters shared by all nodes: `SLEEP_INTERVAL_US`
   (currently 60 s), `RECEIVER_MAC`, `DISPLAY_CONTRAST_PERCENT` (currently 1),
-  `KEEP_DISPLAY_ON_DURING_SLEEP`, `DEBUG_KEEP_AWAKE` (default 0), `BOOT_DELAY_MS`
-  (2000 ms in debug, 500 ms otherwise), and `DEVICE_ID`. `DEVICE_ID` is edited per
-  room before flashing; it is not an env flag.
+  `KEEP_DISPLAY_ON_DURING_SLEEP`, `BLINK_ON_SEND` (default true),
+  `DEBUG_KEEP_AWAKE` (default 0), `BOOT_DELAY_MS` (2000 ms in debug, 500 ms
+  otherwise), and `DEVICE_ID`. `DEVICE_ID` is edited per room before flashing; it
+  is not an env flag.
 - `src/board_config.h` — hardware per board, selected by the env's `-DBOARD_*`
   macro: `SDA_PIN`, `SCL_PIN`, `HAS_DISPLAY`. Add a new board here.
 - ESP-NOW channel recovery (`config.h`): `SEND_TIMEOUT_MS`, `SEND_ATTEMPTS`,
@@ -123,7 +124,8 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
   `#if HAS_DISPLAY` silently evaluates unknown identifiers as 0, which compiles
   the display out even on the OLED board. The same applies to `DEBUG_KEEP_AWAKE`
   and to `HAS_STATUS_LED` / `STATUS_LED_RGB`.
-- `StatusLed::blinkSent()` fires once per acknowledged send and blocks for 60 ms.
+- `StatusLed::blinkSent()` fires once per acknowledged send, gated by
+  `BLINK_ON_SEND` in `config.h` (default 1), and blocks for 60 ms.
   The OLED board's LED is hardwired blue (GPIO8, active low, also a strapping
   pin): it can blink but not turn green. Only the C3-Zero has an RGB WS2812
   (GPIO10), driven with `rgbLedWrite()` from the core — no NeoPixel dependency on
