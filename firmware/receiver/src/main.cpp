@@ -5,14 +5,18 @@
 #include "espnow_receiver.h"
 #include "ingestion.h"
 #include "secrets.h"
+#include "status_led.h"
 
 EspNowReceiver receiver;
 IngestionClient ingestion;
+StatusLed statusLed;
 
 uint32_t lastWifiAttemptMs = 0;
 
 void connectWifi()
 {
+  statusLed.connecting();
+
   Serial.printf("Wi-Fi: connecting to \"%s\"...\n", WIFI_SSID);
 
   WiFi.mode(WIFI_STA);
@@ -30,11 +34,15 @@ void connectWifi()
   lastWifiAttemptMs = millis();
 
   if (WiFi.status() == WL_CONNECTED) {
+    statusLed.connected();
+
     Serial.printf(
         "Wi-Fi: connected | ip=%s | channel=%u\n",
         WiFi.localIP().toString().c_str(),
         static_cast<unsigned>(WiFi.channel()));
   } else {
+    statusLed.disconnected();
+
     Serial.println("ERROR: Wi-Fi connection failed, retrying in background");
   }
 }
@@ -53,6 +61,7 @@ void keepWifiAlive()
   }
 
   lastWifiAttemptMs = millis();
+  statusLed.connecting();
   Serial.println("Wi-Fi: reconnecting...");
   WiFi.reconnect();
 }
@@ -61,6 +70,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
+  statusLed.begin();
   Serial.println();
   Serial.println("ESP32-C3 ESP-NOW receiver");
   Serial.println("-------------------------");

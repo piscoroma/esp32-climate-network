@@ -182,6 +182,13 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
 - `HTTPClient::setTimeout()` takes a `uint16_t` (65 s max) and the endpoint is
   plain HTTP, no TLS. A non-2xx answer or a transport error is logged and the
   reading is dropped: there is no retry queue yet.
+- The ingestion payload also carries the frame's `rssi`, taken from
+  `info->rx_ctrl->rssi` in the receive callback and stored in `ReceivedPacket`.
+  It is serialized as `null` when `rx_ctrl` is not available, so the server can
+  tell "no signal data" from a real `0 dBm`.
+- The receiver runs on a Waveshare ESP32-C3-Zero: the onboard WS2812 on GPIO10 is
+  the status LED (blue = connecting, green = associated, red = failed). The
+  NeoPixel library is the only external dependency of that project.
 - Early `return`s in `setup()` on init failure leave the board awake forever
   draining the battery; error paths that should retry later must still call
   `sleepForNextMeasurement()`.
@@ -210,12 +217,14 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
   blocking send
 - `firmware/sensor-node/src/display.*` — generic SSD1306 72x40 wrapper over U8g2
   (SW I2C on GPIO5/6)
+- `firmware/sensor-node/src/status_led.*` — per-board blink after a confirmed send
 - `shared/sensor_data.h` — shared wire format
 - `firmware/receiver/src/main.cpp` — Wi-Fi association, ingestion loop
 - `firmware/receiver/src/config.h` — ingestion URL and timeouts
 - `firmware/receiver/src/espnow_receiver.*` — ESP-NOW receive callback, packet
   validation, `getLatestData()` for the future display
 - `firmware/receiver/src/ingestion.*` — JSON payload and HTTP POST
+- `firmware/receiver/src/status_led.*` — C3-Zero WS2812 status indicator
 - `firmware/receiver/src/secrets.example.h` — template; `secrets.h` is local and
   gitignored
 - `firmware/sensor-node/.pio/`, `.vscode/c_cpp_properties.json`,

@@ -17,3 +17,7 @@ constexpr uint16_t INGESTION_TIMEOUT_MS = 5000;
 // burst (or a slow POST) does not overwrite data that is still waiting.
 constexpr uint8_t DATA_QUEUE_DEPTH = 8;
 
+// ------------------------------------------------------------------ Status LED
+// Onboard WS2812 of the Waveshare ESP32-C3-Zero.
+constexpr uint8_t STATUS_LED_PIN = 10;
+constexpr uint8_t STATUS_LED_BRIGHTNESS = 1;
