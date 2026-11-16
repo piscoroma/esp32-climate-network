@@ -19,7 +19,7 @@ constexpr uint32_t BOOT_DELAY_MS = DEBUG_KEEP_AWAKE ? 2000 : 500;
 // ESP32 receiver MAC address (same for all nodes).
 constexpr uint8_t RECEIVER_MAC[] = {
     //0xB0, 0xA6, 0x04, 0x98, 0x52, 0x40 // esp32-c6
-    0x90, 0xE5, 0xB1, 0x6C, 0x27, 0x64 // esp32-c3
+    0x90, 0xE5, 0xB1, 0x6C, 0x3A, 0x94  // esp32-c3
 };
 
 // ESP-NOW channel recovery: retry the cached channel, then probe others.
