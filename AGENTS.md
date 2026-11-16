@@ -42,11 +42,11 @@ not proof of behavior — the logic only runs on hardware after wake-up.
 
 ## Board and pinout
 
-| env | board | SDA / SCL | display |
-|---|---|---|---|
-| `oled042` | `esp32-c3-devkitm-1` | GPIO2 / GPIO20 | SSD1306 72x40 |
-| `xiao-c3` | `seeed_xiao_esp32c3` | GPIO6 / GPIO7 | none |
-| `c3-zero` | `esp32-c3-devkitm-1` | GPIO4 / GPIO5* | none |
+| env | board | SDA / SCL | display | status LED |
+|---|---|---|---|---|
+| `oled042` | `esp32-c3-devkitm-1` | GPIO2 / GPIO20 | SSD1306 72x40 | GPIO8, plain blue |
+| `xiao-c3` | `seeed_xiao_esp32c3` | GPIO6 / GPIO7 | none | `HAS_STATUS_LED 0` |
+| `c3-zero` | `esp32-c3-devkitm-1` | GPIO4 / GPIO5* | none | GPIO10, WS2812 |
 
 \* placeholder in `src/board_config.h`; set them to the actual wiring.
 
@@ -121,7 +121,13 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
 
 - `HAS_DISPLAY` must stay a `#define` 0/1 macro, not a `constexpr bool`:
   `#if HAS_DISPLAY` silently evaluates unknown identifiers as 0, which compiles
-  the display out even on the OLED board. The same applies to `DEBUG_KEEP_AWAKE`.
+  the display out even on the OLED board. The same applies to `DEBUG_KEEP_AWAKE`
+  and to `HAS_STATUS_LED` / `STATUS_LED_RGB`.
+- `StatusLed::blinkSent()` fires once per acknowledged send and blocks for 60 ms.
+  The OLED board's LED is hardwired blue (GPIO8, active low, also a strapping
+  pin): it can blink but not turn green. Only the C3-Zero has an RGB WS2812
+  (GPIO10), driven with `rgbLedWrite()` from the core — no NeoPixel dependency on
+  the node side.
 - Debug envs (`*-debug`) set `-DDEBUG_KEEP_AWAKE=1`: `sleepForNextMeasurement()`
   returns instead of sleeping, and `loop()` repeats `measureAndSend()` every
   `SLEEP_INTERVAL_US`, so the USB CDC port stays available and full cycles keep
@@ -169,7 +175,10 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
 - Ingestion POSTs run from `loop()`, never from the ESP-NOW receive callback:
   the callback runs in the Wi-Fi task and a blocking `HTTPClient` request there
   would stall the stack and drop frames. The callback only validates, copies the
-  packet and sets a flag.
+  packet into a FreeRTOS queue (`DATA_QUEUE_DEPTH`, 8) and returns; `loop()`
+  drains the queue. A single slot would silently drop every reading that arrives
+  while a POST is in flight, and the copy would not be atomic between the two
+  tasks.
 - `HTTPClient::setTimeout()` takes a `uint16_t` (65 s max) and the endpoint is
   plain HTTP, no TLS. A non-2xx answer or a transport error is logged and the
   reading is dropped: there is no retry queue yet.

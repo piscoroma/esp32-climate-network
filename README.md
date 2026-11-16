@@ -32,11 +32,11 @@ channel) that survive deep sleep.
 
 ## Hardware
 
-| Env | Board | I2C SDA / SCL | Display |
-|---|---|---|---|
-| `oled042` | ESP32-C3 devkit + 0.42" OLED module | GPIO2 / GPIO20 | SSD1306 72x40 |
-| `xiao-c3` | Seeed XIAO ESP32C3 | GPIO6 / GPIO7 | none |
-| `c3-zero` | Waveshare ESP32-C3-Zero | GPIO4 / GPIO5 * | none |
+| Env | Board | I2C SDA / SCL | Display | Status LED |
+|---|---|---|---|---|
+| `oled042` | ESP32-C3 devkit + 0.42" OLED module | GPIO2 / GPIO20 | SSD1306 72x40 | GPIO8, plain blue |
+| `xiao-c3` | Seeed XIAO ESP32C3 | GPIO6 / GPIO7 | none | not configured |
+| `c3-zero` | Waveshare ESP32-C3-Zero | GPIO4 / GPIO5 * | none | GPIO10, WS2812 |
 
 \* Placeholder in `src/board_config.h`; set it to the actual wiring.
 
@@ -49,6 +49,8 @@ to SDA = GPIO5 / SCL = GPIO6. The SHT31 is deliberately on GPIO2 / GPIO20 (left
 header), and the ESP32-C3 has a single I2C controller: the panel is therefore
 driven through U8g2 **software I2C**, so `Wire` stays dedicated to the sensor.
 The red PWR LED is hardwired and cannot be switched off in software (~0.3 mA).
+The blue user LED on GPIO8 blinks once per confirmed send: it can only blink
+blue, a green blink requires the C3-Zero WS2812 or an external LED.
 
 Power characteristics worth knowing per board:
 
@@ -79,6 +81,7 @@ Power characteristics worth knowing per board:
 │       │   ├── secrets.example.h template for secrets.h (not committed)
 │       │   ├── espnow_receiver.* ESP-NOW receive, validation, serial log
 │       │   └── ingestion.*       JSON payload and HTTP POST
+│       │   └── status_led.*      C3-Zero WS2812 status indicator
 │       └── platformio.ini
 ├── shared/
 │   └── sensor_data.h         ESP-NOW wire format, included by both projects
@@ -167,8 +170,9 @@ a matching `[env:*]` section in `platformio.ini`.
 5. Send the packet on the cached channel up to `SEND_ATTEMPTS` times.
 6. If no ACK, probe the other channels; a success caches the new channel, a full
    failure sets a backoff so the next wakes skip the scan.
-7. Draw the reading on the OLED.
-8. Add the awake time plus the programmed sleep interval to the uptime offset,
+7. Blink the status LED when the packet was acknowledged.
+8. Draw the reading on the OLED.
+9. Add the awake time plus the programmed sleep interval to the uptime offset,
    then start the timer wake-up.
 
 The channel scan exists because ESP-NOW uses the current Wi-Fi channel: when the
@@ -204,7 +208,7 @@ The gateway joins the local Wi-Fi network and POSTs every received reading:
 POST http://192.168.1.175:9106/ingestion
 Content-Type: application/json
 
-{"device_id":"CAMERA DA LETTO","sequence":42,"uptime":2520,"temperature":21.34,"humidity":45.67}
+{"device_id":"CAMERA DA LETTO","sequence":42,"uptime":2520,"temperature":21.34,"humidity":45.67,"rssi":-63}
 ```
 
 | Field | Type | Meaning |
@@ -214,6 +218,7 @@ Content-Type: application/json
 | `uptime` | number | node cumulative seconds since first boot |
 | `temperature` | number | °C |
 | `humidity` | number | %RH |
+| `rssi` | number or `null` | signal strength in dBm seen by the gateway; `null` when the radio metadata is missing |
 
 Wi-Fi credentials are not in the repository. Copy the template and fill it in
 before flashing:
@@ -231,6 +236,10 @@ the ESP-NOW channel to the router's one, so the nodes may have to rescan before
 they are heard again; and a failed POST is only logged — each reading is sent
 once, there is no retry queue yet.
 
+Packets are buffered in a FreeRTOS queue of `DATA_QUEUE_DEPTH` entries (8), so a
+slow POST or several nodes reporting at the same time do not overwrite readings
+that are still waiting. Anything beyond that depth is discarded and reported on
+the serial console.
 ## Roadmap
 
 - [x] `firmware/receiver/` — ESP-NOW receive, packet validation and serial log

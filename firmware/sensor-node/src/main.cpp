@@ -5,6 +5,7 @@
 #include "espnow_sender.h"
 #include "sensor_data.h"
 #include "sht31_sensor.h"
+#include "status_led.h"
 
 #if HAS_DISPLAY
 #include "display.h"
@@ -12,6 +13,7 @@
 
 Sht31Sensor sensor;
 EspNowSender sender;
+StatusLed statusLed;
 
 #if HAS_DISPLAY
 Display display;
@@ -127,6 +129,8 @@ bool measureAndSend()
         data.temperature,
         data.humidity
     );
+
+    statusLed.blinkSent();
   } else {
     Serial.println("ERROR: ESP-NOW transmission failed");
   }
@@ -181,6 +185,8 @@ void setup() {
   Serial.println("ESP32-C3 + SHT31");
   Serial.println("----------------");
   Serial.printf("Node: %u\n", static_cast<unsigned>(DEVICE_ID));
+
+  statusLed.begin();
 
 #if HAS_DISPLAY
   Serial.printf(
