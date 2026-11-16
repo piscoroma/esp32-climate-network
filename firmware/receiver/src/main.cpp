@@ -6,9 +6,11 @@
 #include "ingestion.h"
 #include "secrets.h"
 #include "status_led.h"
+#include "wol.h"
 
 EspNowReceiver receiver;
 IngestionClient ingestion;
+WolService wol;
 StatusLed statusLed;
 
 uint32_t lastWifiAttemptMs = 0;
@@ -71,9 +73,15 @@ void setup() {
   delay(500);
 
   statusLed.begin();
+
   Serial.println();
-  Serial.println("ESP32-C3 ESP-NOW receiver");
+#if WOL_ENABLED
+  Serial.println("ESP32-C3 climate receiver + WOL proxy");
+  Serial.println("-------------------------------------");
+#else
+  Serial.println("ESP32-C3 climate receiver");
   Serial.println("-------------------------");
+#endif
 
   connectWifi();
 
@@ -81,6 +89,8 @@ void setup() {
     Serial.println("ERROR: receiver initialization failed");
     return;
   }
+
+  wol.begin();
 
   Serial.println("Waiting for SensorData packets...");
 }

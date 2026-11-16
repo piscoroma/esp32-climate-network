@@ -4,8 +4,8 @@ ESP32-C3 Arduino firmware (PlatformIO): reads an SHT31 over I2C, sends one
 `SensorData` packet over ESP-NOW to a hardcoded receiver MAC, shows the reading
 on the 0.42" OLED when the board has one, then deep-sleeps (currently 60 s).
 The receiver (`firmware/receiver`) is the ESP32-C3 gateway. It receives
-`SensorData` packets, logs them to serial and POSTs each reading to the
-ingestion endpoint; the room-summary display comes next.
+`SensorData` packets and POSTs each reading to the ingestion endpoint, and it
+doubles as a Wake-on-LAN proxy; the room-summary display comes next.
 
 ## Repository layout
 
@@ -171,7 +171,10 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
   the nodes scan.
 - The receiver's Wi-Fi credentials live in `firmware/receiver/src/secrets.h`,
   which is gitignored; `secrets.example.h` is the committed template. A fresh
-  clone does not build until the file is copied to `secrets.h`.
+  clone does not build until the file is copied to `secrets.h`. The same file
+  holds `AUTH_TOKEN`, the Wake-on-LAN ports and the deployment data
+  (`WOL_HTTP_PORT`, `WOL_PORT`, `WOL_TARGET_MAC`, `WOL_BROADCAST`,
+  `WOL_UNICAST`): none of it belongs in the repository.
 - Ingestion POSTs run from `loop()`, never from the ESP-NOW receive callback:
   the callback runs in the Wi-Fi task and a blocking `HTTPClient` request there
   would stall the stack and drop frames. The callback only validates, copies the
@@ -179,6 +182,13 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
   drains the queue. A single slot would silently drop every reading that arrives
   while a POST is in flight, and the copy would not be atomic between the two
   tasks.
+- Duplicates are dropped in the receive callback, before the queue: the last
+  `SensorData` from each sender is kept in a fixed table of 8 MACs and a packet
+  identical to the stored one is counted and discarded. Compare the whole
+  struct, never just `sequence` — a power cycle restarts `sequence` from 1 but
+  also resets `uptime`, so an equality test on the struct cannot confuse the two.
+  The table is RAM-only and does not replace a unique `(device_id, sequence)`
+  key on the server.
 - `HTTPClient::setTimeout()` takes a `uint16_t` (65 s max) and the endpoint is
   plain HTTP, no TLS. A non-2xx answer or a transport error is logged and the
   reading is dropped: there is no retry queue yet.
@@ -189,6 +199,22 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
 - The receiver runs on a Waveshare ESP32-C3-Zero: the onboard WS2812 on GPIO10 is
   the status LED (blue = connecting, green = associated, red = failed). The
   NeoPixel library is the only external dependency of that project.
+- The receiver loop is single-threaded and shared by the web server and the
+  ingestion POST: serve HTTP first, process at most **one** queued packet per
+  iteration, keep `INGESTION_TIMEOUT_MS` short (currently 3 s) and the loop delay
+  at ~2 ms.
+  A hung endpoint must delay `/wake` by one request, not by the whole backlog.
+- Wake-on-LAN lives on `WOL_HTTP_PORT` from `secrets.h` (`GET /health`,
+  `POST /wake` with a Bearer token from the same file) and sends the 102-byte
+  magic packet five times, alternating subnet broadcast and unicast on
+  `WOL_PORT`. It is the same contract the old standalone `esp32-wol-proxy`
+  project exposed, so existing clients keep working.
+  Every inbound request is logged as `HTTP <method> <uri> from <ip> -> <status>`;
+  the outbound ingestion POSTs are logged separately by `IngestionClient`.
+- Wake-on-LAN is behind `WOL_ENABLED` (default 1, `-DWOL_ENABLED=0` to disable):
+  with 0 the `WolService` methods become no-ops, the web server is not compiled
+  and flash drops by ~35 KB. `main.cpp` needs no `#if` — the class keeps the same
+  interface in both builds.
 - Early `return`s in `setup()` on init failure leave the board awake forever
   draining the battery; error paths that should retry later must still call
   `sleepForNextMeasurement()`.
@@ -219,13 +245,15 @@ is no dedicated PlatformIO board id for the Waveshare C3-Zero in platform
   (SW I2C on GPIO5/6)
 - `firmware/sensor-node/src/status_led.*` — per-board blink after a confirmed send
 - `shared/sensor_data.h` — shared wire format
-- `firmware/receiver/src/main.cpp` — Wi-Fi association, ingestion loop
-- `firmware/receiver/src/config.h` — ingestion URL and timeouts
+- `firmware/receiver/src/main.cpp` — Wi-Fi association, loop scheduling
+- `firmware/receiver/src/config.h` — ingestion and status LED parameters, WOL
+  packet layout; ports, token and target addresses are in `secrets.h`
 - `firmware/receiver/src/espnow_receiver.*` — ESP-NOW receive callback, packet
-  validation, `getLatestData()` for the future display
+  validation, FreeRTOS packet queue, serial log
 - `firmware/receiver/src/ingestion.*` — JSON payload and HTTP POST
+- `firmware/receiver/src/wol.*` — `/health` and `/wake` endpoints, magic packet
 - `firmware/receiver/src/status_led.*` — C3-Zero WS2812 status indicator
 - `firmware/receiver/src/secrets.example.h` — template; `secrets.h` is local and
-  gitignored
+  gitignored (Wi-Fi credentials and `AUTH_TOKEN`)
 - `firmware/sensor-node/.pio/`, `.vscode/c_cpp_properties.json`,
   `compile_commands.json` are generated artifacts; never hand-edit them.

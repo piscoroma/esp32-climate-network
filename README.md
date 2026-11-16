@@ -15,7 +15,7 @@ nodes practical.
 | Component | Path | State |
 |---|---|---|
 | Sensor node | `firmware/sensor-node/` | Working — 3 boards, 6 build environments |
-| Receiver / gateway | `firmware/receiver/` | Phase 2 — receives over ESP-NOW, POSTs each reading |
+| Receiver / gateway | `firmware/receiver/` | ESP-NOW receive, HTTP ingestion, Wake-on-LAN proxy |
 | Wire format | `shared/sensor_data.h` | Stable, pinned by `static_assert` |
 
 ## Architecture
@@ -76,11 +76,12 @@ Power characteristics worth knowing per board:
 │   │   └── platformio.ini
 │   └── receiver/             ESP32-C3 gateway firmware (PlatformIO)
 │       ├── src/
-│       │   ├── main.cpp          Wi-Fi association, ingestion loop
-│       │   ├── config.h          ingestion URL and timeouts
+│       │   ├── main.cpp          Wi-Fi association, loop scheduling
+│       │   ├── config.h          ingestion, WOL and LED parameters
 │       │   ├── secrets.example.h template for secrets.h (not committed)
-│       │   ├── espnow_receiver.* ESP-NOW receive, validation, serial log
-│       │   └── ingestion.*       JSON payload and HTTP POST
+│       │   ├── espnow_receiver.* ESP-NOW receive, queue, serial log
+│       │   ├── ingestion.*       JSON payload and HTTP POST
+│       │   ├── wol.*             /health and /wake endpoints, magic packet
 │       │   └── status_led.*      C3-Zero WS2812 status indicator
 │       └── platformio.ini
 ├── shared/
@@ -240,6 +241,57 @@ Packets are buffered in a FreeRTOS queue of `DATA_QUEUE_DEPTH` entries (8), so a
 slow POST or several nodes reporting at the same time do not overwrite readings
 that are still waiting. Anything beyond that depth is discarded and reported on
 the serial console.
+
+Retried sends (lost ACK, channel probe) deliver the same packet more than once.
+The gateway keeps the last `SensorData` per sender and drops exact repeats,
+reporting the count on the console. The comparison covers the whole struct, not
+just `sequence`, so a node power cycle — which restarts `sequence` but also
+`uptime` — is never mistaken for a duplicate. This is RAM-only and does not
+replace an idempotent `(device_id, sequence)` key on the server side.
+
+## Wake-on-LAN
+
+The gateway doubles as a Wake-on-LAN proxy, so the homelab host can be woken from
+another network:
+
+```
+GET  http://<gateway>:<port>/health   ->  {"status":"ok"}
+POST http://<gateway>:<port>/wake     ->  {"status":"wake_packet_sent"}
+```
+
+`/wake` requires `Authorization: Bearer <token>`; the token is `AUTH_TOKEN` in
+`secrets.h`. The magic packet (102 bytes) is sent five times, alternating between
+the subnet broadcast address and a unicast address, on the UDP Wake-on-LAN port.
+The listening port, the UDP port, the host to wake and those two addresses are
+deployment data and live in `secrets.h` too (`WOL_HTTP_PORT`, `WOL_PORT`,
+`WOL_TARGET_MAC`, `WOL_BROADCAST`, `WOL_UNICAST`), so they never end up in the
+repository. The template uses 7766 for HTTP and the standard 9 for Wake-on-LAN.
+
+```bash
+curl -i http://<gateway>:<port>/health
+curl -i -X POST http://<gateway>:<port>/wake -H 'Authorization: Bearer <token>'
+```
+
+Every request to the web service is logged on the serial console with the client
+address and the status code (outbound ingestion POSTs are not logged this way):
+
+```
+HTTP GET /health from 192.168.1.20 -> 200
+HTTP POST /wake from 192.168.1.20 -> 200
+HTTP POST /wake from 192.168.1.20 -> 401
+HTTP GET /nope from 192.168.1.20 -> 404
+```
+
+Both jobs share one core and one radio. The loop serves HTTP first and then
+processes **at most one** queued reading per iteration, so an ingestion POST can
+delay a `/wake` request by at most one request, never by the whole backlog.
+ESP-NOW reception is unaffected either way: it runs in the Wi-Fi task and the
+packets wait in the queue.
+
+The proxy is optional: build with `-DWOL_ENABLED=0` (or set the macro to 0 in
+`config.h`) to leave it out. That removes the web server and the UDP stack and
+saves about 35 KB of flash.
+
 ## Roadmap
 
 - [x] `firmware/receiver/` — ESP-NOW receive, packet validation and serial log
