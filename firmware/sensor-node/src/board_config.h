@@ -26,8 +26,8 @@ constexpr uint8_t SCL_PIN = 7;   // D5
 constexpr uint8_t STATUS_LED_PIN = 8;
 constexpr bool STATUS_LED_ACTIVE_LOW = true;
 #elif defined(BOARD_C3_ZERO)
-constexpr uint8_t SDA_PIN = 4;   // adjust to your wiring
-constexpr uint8_t SCL_PIN = 5;
+constexpr uint8_t SDA_PIN = 2;
+constexpr uint8_t SCL_PIN = 0;
 #define HAS_DISPLAY 0
 // Onboard WS2812 on GPIO10: the blink is green.
 #define HAS_STATUS_LED 1
